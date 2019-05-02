@@ -3,8 +3,9 @@ import createApolloClient from './createApolloClient';
 const { describe, test, expect } = global;
 
 const runGQLTest = async (testToRun) => {
-  describe('GraphQL Tests', async () => {
-    let data = {};
+  let data = { endPoint: testToRun.endPoint };
+
+  describe('GraphQL Tests', () => {
     const executeGQLCommand = async (executionPlan) => {
       const apolloClient = createApolloClient(data);
       const testInfo = executionPlan.pop();
@@ -14,31 +15,35 @@ const runGQLTest = async (testToRun) => {
       }
       const definition = testInfo.gql.definitions[0];
       let result = null;
-      switch (definition.operation) {
-        case 'mutation': {
-          const params = { mutation: testInfo.gql };
-          if (testInfo.vars) {
-            params.variables = await testInfo.vars(data);
-          }
-          result = await apolloClient.mutate(params);
+      if (!definition.operation) {
+        throw Error(`Unknown GQL operation ${definition.operation}.`);
+      }
 
-          if (testInfo.result) {
-            data = { ...data, ...(await testInfo.result(result.data)) };
-          }
-          expect(testInfo.test(data)).toBe(true);
+      const expectTestToBeTrue = async (operation) => {
+        const operations = { mutation: 'mutate', query: 'query' };
+        const params = { [`${operation}`]: testInfo.gql };
+
+        if (testInfo.vars) {
+          params.variables = await testInfo.vars(data);
+        }
+
+        result = await apolloClient[operations[operation]](params);
+
+        if (testInfo.result) {
+          data = { ...data, ...(await testInfo.result(result.data)) };
+        }
+
+        expect(testInfo.test(data)).toBe(true);
+      };
+
+      const { operation } = definition;
+      switch (operation) {
+        case 'mutation': {
+          await expectTestToBeTrue(operation);
           break;
         }
         case 'query': {
-          const params = { query: testInfo.gql };
-          if (testInfo.vars) {
-            params.variables = await testInfo.vars(data);
-          }
-          result = await apolloClient.query(params);
-
-          if (testInfo.result) {
-            data = { ...data, ...(await testInfo.result(result.data)) };
-          }
-          expect(testInfo.test(data)).toBe(true);
+          await expectTestToBeTrue(operation);
           break;
         }
         default:
@@ -66,15 +71,21 @@ const runGQLTest = async (testToRun) => {
         await executeGQLCommand(executionPlan);
       });
     };
-    data.endPoint = testToRun.endPoint;
-    if (testToRun.repeat) {
-      await Promise.all(
-        new Array(testToRun.repeat).fill(0).map((_, i) => executeTest(testToRun, i + 1)),
-      );
-    } else {
-      await executeTest(testToRun);
-    }
-    return data;
+
+    const main = async () => {
+      if (testToRun.repeat) {
+        await Promise.all(
+          new Array(testToRun.repeat).fill(0).map((_, i) => executeTest(testToRun, i + 1)),
+        );
+      } else {
+        await executeTest(testToRun);
+      }
+    };
+
+    main();
   });
+
+  return data;
 };
+
 export default runGQLTest;
